@@ -5,12 +5,14 @@ from collections import Counter
 
 from text import liwc 
 from text.tokenizer import Tokenizer
+from datetime import datetime
 
 tokenizer = Tokenizer()
 
 
 def preprocess_docs(documents, out_json_fn,
                         text_key="text",
+                        date_key='date',
                         toks_key="toks",
                         liwc_map=True,
                         tok_hashing=False,
@@ -37,7 +39,15 @@ def preprocess_docs(documents, out_json_fn,
     """
     with open(out_json_fn, 'w') as outf:
         for d in documents:
+            print (d)
+
+            # Convert datetime to ISO 8601 string if it exists
+            if date_key in d and isinstance(d[date_key], datetime):
+                d[date_key] = d[date_key].isoformat()
+
             d[toks_key] = preprocess_text(d[text_key], liwc_map=liwc_map, tok_hashing=tok_hashing)
+            
+            print (d[toks_key])
             if custom_doc_fnc:
                 d = custom_doc_fnc(d)
             outf.write(ujson.dumps(d) + "\n")

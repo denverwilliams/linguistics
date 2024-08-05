@@ -15,6 +15,7 @@ def preprocess_data(inputfn, outfn, dformat, text_key="text"):
     if dformat == 'eml':
         text_key = 'body'
     docs = Constructor(inputfn)
+
     preprocess_docs(docs, outfn, text_key=text_key)
 
 
