@@ -8,6 +8,11 @@ import re
 import mailparser
 import unidecode
 
+# Second Parser
+import email
+from email import policy
+from email.parser import BytesParser
+
 
 
 ###########################################
@@ -95,27 +100,70 @@ class EmlDataReader:
         # We will try to limit the duplicates we release
         msg_ids = set()
         for fn in self.fns:
-            msg = mailparser.parse_from_file(fn)
-            if msg.message_id in msg_ids:
-                continue
-            msg_ids.add(msg.message_id)
-            # Do our best to clean the msg body
-            body = self._clean_body(msg.body)
-            e = {
-                "message_id": msg.message_id,
-                # Keep only email addrs, not attempted parsed names
-                "from": msg.from_[0][1],
-                # Combine to and cc fields (i.e., no distinction made
-                #   between direct messages and group messages)
-                "to": [a[1] for a in msg.to] + [a[1] for a in msg.cc],
-                "date": msg.date,
-                "subject": msg.subject,
-                "body": body,
-                "attachments": [a['filename'] for a in msg.attachments]
-            }
-            if not e['from'] or not e['to']:
-                continue
-            yield e
+            print("Reading files!!!!!!!")
+            print(fn)
+            msg = None
+            try:
+                msg = mailparser.parse_from_file(fn)
+                if msg.message_id in msg_ids:
+                    continue
+                msg_ids.add(msg.message_id)
+                # Do our best to clean the msg body
+                body = self._clean_body(msg.body)
+                e = {
+                    "message_id": msg.message_id,
+                    # Keep only email addrs, not attempted parsed names
+                    "from": msg.from_[0][1],
+                    # Combine to and cc fields (i.e., no distinction made
+                    #   between direct messages and group messages)
+                    "to": [a[1] for a in msg.to] + [a[1] for a in msg.cc],
+                    "date": msg.date,
+                    "subject": msg.subject,
+                    "body": body,
+                    "attachments": [a['filename'] for a in msg.attachments]
+                }
+                if not e['from'] or not e['to']:
+                    continue
+                yield e
+
+            except Exception as primary_parser_exception:
+                print(f"Primary parser failed with exception: {primary_parser_exception}")
+                try:
+                    with open(fn, 'rb') as f:
+                        content = f.read()
+
+                    # Parse the email from bytes
+                    msg = BytesParser(policy=policy.default).parsebytes(content)
+
+                    # Extract message ID
+                    message_id = msg.get('message-id')
+                    if message_id in msg_ids:
+                        continue
+                    msg_ids.add(message_id)
+
+                    # Extract and clean body
+                    body = self._clean_body(get_body_content(msg))
+
+                    # Construct email information dictionary
+                    e = {
+                        "message_id": message_id,
+                        "from": extract_email_address(msg.get('from')),
+                        "to": extract_email_addresses(msg.get_all('to', [])) + extract_email_addresses(msg.get_all('cc', [])),
+                        "date": msg.get('date'),
+                        "subject": msg.get('subject'),
+                        "body": body,
+                        "attachments": [part.get_filename() for part in msg.iter_parts() if part.get_content_disposition() == 'attachment']
+                    }
+
+                    if not e['from'] or not e['to']:
+                        continue
+                    yield e
+
+                except Exception as fallback_parser_exception:
+                    print(f"Fallback parser failed with exception: {fallback_parser_exception}")
+                    # Handle the fallback failure (log or take other actions as necessary)
+                    continue
+
 
     # Regexes for some common quoted text beginnings
     QUOTED_TXT_RES = [
@@ -181,3 +229,25 @@ class EmlDataReader:
 
 
 
+def get_body_content(msg):
+    """Return the plain text body content of the email."""
+    if msg.is_multipart():
+        for part in msg.iter_parts():
+            if part.get_content_type() == 'text/plain':
+                return part.get_payload(decode=True).decode(part.get_content_charset(), errors='replace')
+    else:
+        return msg.get_payload(decode=True).decode(msg.get_content_charset(), errors='replace')
+    return ''
+
+def extract_email_address(address_field):
+    """Extract email address from the 'from' field."""
+    if address_field:
+        return email.utils.parseaddr(address_field)[1]
+    return ''
+
+def extract_email_addresses(address_field_list):
+    """Extract email addresses from a list of 'to' or 'cc' fields."""
+    addresses = []
+    for address_field in address_field_list:
+        addresses.append(email.utils.parseaddr(address_field)[1])
+    return addresses

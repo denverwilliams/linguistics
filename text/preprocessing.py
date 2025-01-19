@@ -53,7 +53,6 @@ def preprocess_docs(documents, out_json_fn,
             outf.write(ujson.dumps(d) + "\n")
         outf.close()
 
-
 def preprocess_text(txt, liwc_map=True, tok_hashing=False):
     toks = tokenizer.tokenize(txt)
     if liwc_map:
