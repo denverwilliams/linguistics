@@ -5,6 +5,7 @@ import ujson
 
 # For *.eml files
 import re
+import collections
 import mailparser
 import unidecode
 
@@ -88,6 +89,8 @@ class EmlDataReader:
     def __init__(self, base_dir):
         self.base_dir = base_dir
         self.fns = _get_fns_from_dir(base_dir, "eml")
+        self.internal_domain = 'enron.com'
+        self.sender_frequency = collections.defaultdict(int)
 
     def __iter__(self):
         """
@@ -108,6 +111,15 @@ class EmlDataReader:
                 if msg.message_id in msg_ids:
                     continue
                 msg_ids.add(msg.message_id)
+
+                # Apply first filter: Check if sender is external and not an internal recipient
+                if not self._is_internal_sender(msg) or not self._has_internal_recipient(msg):
+                    continue  # Skip if email is from an external address and no internal recipients
+
+                # Apply second filter: Check if the email is a broadcast or administrative email
+                if self._is_broadcast_or_admin_email(msg):
+                    continue  # Skip if email is considered a broadcast or administrative message
+
                 # Do our best to clean the msg body
                 body = self._clean_body(msg.body)
                 e = {
@@ -140,6 +152,14 @@ class EmlDataReader:
                     if message_id in msg_ids:
                         continue
                     msg_ids.add(message_id)
+
+                    # Check external sender and internal recipient filter
+                    if not self._is_internal_sender(msg) and not self._has_internal_recipient(msg):
+                        continue
+
+                    # Check broadcast or administrative email filter
+                    if self._is_broadcast_or_admin_email(msg):
+                        continue
 
                     # Extract and clean body
                     body = self._clean_body(get_body_content(msg))
@@ -187,6 +207,37 @@ class EmlDataReader:
         re.compile(r"[Ss]ent from my (iPhone|Windows|Android|mobile)"),
         re.compile(r"[Ss]ent: (Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)[,]? (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec|January|February|March|April|May|June|July|August|September|October|November|December) [0-9]+, 201[0-9](,)? (at )?[0-9]+:[0-9][0-9]"),
     ]
+
+    def _is_internal_sender(self, msg):
+        """Check if the sender is internal (based on email domain)."""
+        sender = msg.from_[0][1]
+        return sender.endswith(f"@{self.internal_domain}")
+
+    def _has_internal_recipient(self, msg):
+        """Check if any recipient is internal."""
+        recipients = [a[1] for a in msg.to] + [a[1] for a in msg.cc]
+        return any(recipient.endswith(f"@{self.internal_domain}") for recipient in recipients)
+
+    def _is_broadcast_or_admin_email(self, msg):
+        """Identify broadcast or administrative messages."""
+        num_recipients = len([a[1] for a in msg.to] + [a[1] for a in msg.cc])
+        if num_recipients > 5:  # A broadcast message (you can adjust the number)
+            return True
+        
+        # Track frequency of emails from the sender
+        sender = msg.from_[0][1]
+        self.sender_frequency[sender] += 1
+
+        # Administrative email logic: frequent sender, few recipients, and specific keywords
+        if self.sender_frequency[sender] > 10 and num_recipients == 1:
+            body = self._clean_body(msg.body)
+            subject = msg.subject.lower()
+            body = body.lower()
+            admin_keywords = ["expense report", "approval", "reminder", "action required"]
+            if any(keyword in subject or keyword in body for keyword in admin_keywords):
+                return True
+
+        return False
 
     def _clean_body(self, body):
         """
